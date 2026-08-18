@@ -2,5 +2,6 @@
 const CONFIG = {
     LIFF_ID: 'YOUR_LIFF_ID',
     SUPABASE_URL: 'https://your-project.supabase.co',
-    SUPABASE_KEY: 'your-anon-key'
+    SUPABASE_KEY: 'your-anon-key',
+    FINISHED_URL: 'https://example.com/finished'
 };

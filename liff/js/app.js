@@ -18,6 +18,13 @@ async function init() {
         document.getElementById('user-name').textContent = userProfile.displayName;
         
         await fetchData();
+
+        // Check for invitation token parameter (?invite=TOKEN)
+        const urlParams = new URLSearchParams(window.location.search);
+        const inviteToken = urlParams.get('invite');
+        if (inviteToken) {
+            await handleInviteToken(inviteToken);
+        }
         
         document.getElementById('loading-screen').classList.add('hidden');
         document.getElementById('main-content').classList.remove('hidden');
@@ -48,17 +55,18 @@ async function fetchData() {
         return;
     }
 
-    // 1. Fetch Slots (Filter for Today, Not started, and using availability view if possible)
+    // 1. Fetch Slots (Filter for Today, Not started, and using availability view)
+    // Filter out unpublished slots (publish_at > NOW())
     const now = dayjs().toISOString();
     const endOfDay = dayjs().endOf('day').toISOString();
     
-    // We use the availability view to get reserved_count efficiently
     const { data: slots } = await supabaseClient
         .from('slot_availability')
-        .select('id, start_time, end_time, capacity, reserved_count')
+        .select('id, start_time, end_time, capacity, reserved_count, publish_at')
         .eq('is_cancelled', false)
         .gt('start_time', now) 
         .lte('start_time', endOfDay)
+        .or(`publish_at.is.null,publish_at.lte.${now}`)
         .order('start_time', { ascending: true });
 
     window.allSlots = slots || [];
@@ -87,13 +95,74 @@ async function fetchData() {
     
     renderNotifications(notes || []);
 
-    // 4. Fetch Global Settings (Finished URL)
+    // 4. Fetch Global Settings (Finished URL fallback to CONFIG.FINISHED_URL)
     const { data: settings } = await supabaseClient
         .from('global_settings')
         .select('value')
         .eq('key', 'finished_url')
         .maybeSingle();
-    window.finishedUrl = settings?.value || 'https://example.com/finished';
+    window.finishedUrl = settings?.value || CONFIG.FINISHED_URL || 'https://example.com/finished';
+}
+
+async function handleInviteToken(token) {
+    if (currentReservation) {
+        alert('すでに予約済みのため、招待リンクはご利用いただけません。');
+        return;
+    }
+
+    const { data: inv, error } = await supabaseClient
+        .from('invitations')
+        .select('id, slot_id, status, expires_at, slots(start_time, end_time)')
+        .eq('token', token)
+        .maybeSingle();
+
+    if (error || !inv) {
+        alert('無効な招待リンクです。');
+        return;
+    }
+
+    if (inv.status !== 'pending' || dayjs(inv.expires_at).isBefore(dayjs())) {
+        alert('この招待リンクは有効期限切れか既に利用されています。');
+        return;
+    }
+
+    const slot = Array.isArray(inv.slots) ? inv.slots[0] : inv.slots;
+    const start = dayjs(slot.start_time).tz("Asia/Tokyo").format('HH:mm');
+    const end = dayjs(slot.end_time).tz("Asia/Tokyo").format('HH:mm');
+
+    const modal = document.getElementById('general-qr-modal');
+    const qrContainer = document.getElementById('general-qrcode');
+    const modalTitle = modal.querySelector('h3');
+    const modalDesc = modal.querySelector('p.text-xs');
+
+    qrContainer.innerHTML = `
+        <div class="my-4">
+            <button id="redeem-invite-btn" class="maid-btn w-full py-4 px-6 text-base font-black shadow-lg active:scale-95 transition-all">
+                【${start} 〜 ${end}】<br>この枠で予約を確定する
+            </button>
+        </div>
+    `;
+
+    modalTitle.textContent = '招待限定予約';
+    modalDesc.innerHTML = `特別招待枠（確定保留中）です。<br>上のボタンを押して予約を完了させてください。`;
+    modal.classList.remove('hidden');
+
+    document.getElementById('redeem-invite-btn').onclick = async () => {
+        const { data, error: rpcErr } = await supabaseClient.rpc('redeem_invitation', {
+            p_token: token,
+            p_line_user_id: userProfile.userId,
+            p_user_name: userProfile.displayName
+        });
+
+        if (rpcErr || !data.success) {
+            alert(data?.message || rpcErr?.message || '予約の完了に失敗しました。');
+            return;
+        }
+
+        alert('招待予約が完了しました！');
+        modal.classList.add('hidden');
+        await fetchData();
+    };
 }
 
 function renderSlots(slots) {
@@ -191,7 +260,7 @@ function renderReservation(res) {
                     <p class="text-[10px] text-pink-400 font-bold animate-pulse">お楽しみ中 ♡</p>
                 `;
             } else {
-                actionContainer.innerHTML = `<p class="text-xs text-gray-400 font-bold">URL発行をお待ちください...</p>`;
+                actionContainer.innerHTML = `<p class="text-xs text-gray-400 font-bold">メニューURL発行なしで入場済みです</p>`;
             }
             resView.appendChild(actionContainer);
 
@@ -241,7 +310,6 @@ function renderNotifications(notes) {
 async function handleReserve(slotId) {
     if (currentReservation) return;
     
-    // 予約はDBを直接変更せず、情報付きQRを表示するだけに変更
     const selectedSlot = window.allSlots.find(s => s.id === slotId);
     if (!selectedSlot) return;
 
@@ -252,7 +320,6 @@ async function handleReserve(slotId) {
     
     qrContainer.innerHTML = '';
     const qr = qrcode(0, 'M');
-    // フォーマット: RESERVE:SLOT_ID:LINE_USER_ID:USER_NAME
     qr.addData(`RESERVE:${slotId}:${userProfile.userId}:${userProfile.displayName}`);
     qr.make();
     qrContainer.innerHTML = qr.createImgTag(6);
@@ -273,7 +340,6 @@ async function handleCancel() {
     }
     if (!confirm('キャンセルしますか？')) return;
     
-    // RLS許可された直接のSQL更新
     const { error } = await supabaseClient
         .from('reservations')
         .update({ status: 'cancelled', updated_at: new Date().toISOString() })
