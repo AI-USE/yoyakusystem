@@ -1,0 +1,34 @@
+@import "tailwindcss";
+
+:root {
+  --admin-primary: #4f46e5;
+  --admin-bg: #f8fafc;
+}
+
+body {
+  background-color: var(--admin-bg);
+  color: #1e293b;
+}
+
+.admin-card {
+  @apply bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden;
+}
+
+.admin-btn-primary {
+  @apply bg-indigo-600 text-white px-4 py-2 rounded-lg font-semibold hover:bg-indigo-700 transition-all active:scale-95 disabled:opacity-50 shadow-sm;
+}
+
+.admin-input {
+  @apply block w-full rounded-lg border border-slate-300 px-4 py-2.5 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all;
+}
+
+/* Custom Table */
+.admin-table {
+  @apply min-w-full divide-y divide-slate-200;
+}
+.admin-table th {
+  @apply px-6 py-4 bg-slate-50 text-left text-xs font-bold text-slate-500 uppercase tracking-wider;
+}
+.admin-table td {
+  @apply px-6 py-4 whitespace-nowrap text-sm text-slate-600;
+}

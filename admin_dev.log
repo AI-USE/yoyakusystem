@@ -1,0 +1,123 @@
+
+> admin@0.1.0 dev
+> next dev
+
+   ▲ Next.js 15.1.0
+   - Local:        http://localhost:3000
+   - Network:      http://192.168.0.2:3000
+
+ ✓ Starting...
+ ✓ Ready in 1830ms
+ ○ Compiling /login ...
+ ✓ Compiled /login in 4.3s (659 modules)
+ HEAD /login 200 in 4742ms
+ GET /login 200 in 221ms
+ GET /login 200 in 40ms
+ ○ Compiling /api/login ...
+ ✓ Compiled /api/login in 859ms (665 modules)
+ POST /api/login 200 in 1125ms
+ GET /login 200 in 367ms
+ ○ Compiling / ...
+ ✓ Compiled /slots in 4.8s (2045 modules)
+ GET / 200 in 5711ms
+ GET /slots 200 in 4696ms
+ ○ Compiling /reception ...
+ ✓ Compiled /reception in 2.9s (2496 modules)
+ POST /slots 200 in 5798ms
+ GET /reception 200 in 3794ms
+getSlotsData error: {
+  message: 'TypeError: fetch failed',
+  details: 'TypeError: fetch failed\n' +
+    '\n' +
+    'Caused by: Error: getaddrinfo ENOTFOUND placeholder.supabase.co (ENOTFOUND)\n' +
+    'Error: getaddrinfo ENOTFOUND placeholder.supabase.co\n' +
+    '    at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:122:26)\n' +
+    '    at GetAddrInfoReqWrap.callbackTrampoline (node:internal/async_hooks:130:17)',
+  hint: '',
+  code: ''
+}
+getTodaySlots error: {
+  message: 'TypeError: fetch failed',
+  details: 'TypeError: fetch failed\n' +
+    '\n' +
+    'Caused by: Error: getaddrinfo ENOTFOUND placeholder.supabase.co (ENOTFOUND)\n' +
+    'Error: getaddrinfo ENOTFOUND placeholder.supabase.co\n' +
+    '    at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:122:26)\n' +
+    '    at GetAddrInfoReqWrap.callbackTrampoline (node:internal/async_hooks:130:17)',
+  hint: '',
+  code: ''
+}
+ POST /reception 200 in 7231ms
+ GET /login 200 in 67ms
+ POST /api/login 200 in 32ms
+ GET / 200 in 2904ms
+ GET / 200 in 3036ms
+ GET /slots 200 in 78ms
+ POST /slots 200 in 3033ms
+ GET /reception 200 in 43ms
+getSlotsData error: {
+  message: 'TypeError: fetch failed',
+  details: 'TypeError: fetch failed\n' +
+    '\n' +
+    'Caused by: Error: getaddrinfo ENOTFOUND placeholder.supabase.co (ENOTFOUND)\n' +
+    'Error: getaddrinfo ENOTFOUND placeholder.supabase.co\n' +
+    '    at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:122:26)\n' +
+    '    at GetAddrInfoReqWrap.callbackTrampoline (node:internal/async_hooks:130:17)',
+  hint: '',
+  code: ''
+}
+getTodaySlots error: {
+  message: 'TypeError: fetch failed',
+  details: 'TypeError: fetch failed\n' +
+    '\n' +
+    'Caused by: Error: getaddrinfo ENOTFOUND placeholder.supabase.co (ENOTFOUND)\n' +
+    'Error: getaddrinfo ENOTFOUND placeholder.supabase.co\n' +
+    '    at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:122:26)\n' +
+    '    at GetAddrInfoReqWrap.callbackTrampoline (node:internal/async_hooks:130:17)',
+  hint: '',
+  code: ''
+}
+ POST /reception 200 in 7030ms
+ ✓ Compiled in 16.1s (2429 modules)
+ ✓ Compiled in 1642ms (2429 modules)
+ GET /login 200 in 499ms
+ ○ Compiling /api/login ...
+ ✓ Compiled /api/login in 1828ms (1316 modules)
+ POST /api/login 200 in 2103ms
+ ✓ Compiled / in 421ms (1380 modules)
+ GET / 200 in 1410ms
+ GET / 200 in 172ms
+ GET /slots 200 in 219ms
+[Error: Failed to find Server Action "00da9fd0e220651a23655eb8e9ea68a0239689bffe". This request might be from an older or newer deployment. Original error: Cannot read properties of undefined (reading 'workers')]
+ POST /slots 200 in 808ms
+ GET /reception 200 in 326ms
+[Error: Failed to find Server Action "00a85ca386e7aa2575e0fdd288201320b5a38e675a". This request might be from an older or newer deployment. Original error: Cannot read properties of undefined (reading 'workers')]
+ POST /reception 200 in 546ms
+ GET /login 200 in 404ms
+ POST /api/login 200 in 158ms
+ GET / 200 in 2956ms
+ GET / 200 in 2777ms
+ GET /slots 200 in 141ms
+[Error: Failed to find Server Action "00da9fd0e220651a23655eb8e9ea68a0239689bffe". This request might be from an older or newer deployment. Original error: Cannot read properties of undefined (reading 'workers')]
+ POST /slots 200 in 1408ms
+ ⚠ Found a change in next.config.ts. Restarting the server to apply the changes...
+   ▲ Next.js 15.1.0
+   - Local:        http://localhost:3000
+   - Network:      http://192.168.0.2:3000
+
+ ✓ Starting...
+ ✓ Ready in 3.4s
+ ⚠ Found a change in next.config.ts. Restarting the server to apply the changes...
+   ▲ Next.js 15.1.0
+   - Local:        http://localhost:3000
+   - Network:      http://192.168.0.2:3000
+
+ ✓ Starting...
+ ✓ Ready in 3.2s
+ ⚠ Found a change in next.config.ts. Restarting the server to apply the changes...
+   ▲ Next.js 15.1.0
+   - Local:        http://localhost:3000
+   - Network:      http://192.168.0.2:3000
+
+ ✓ Starting...
+ ✓ Ready in 3.7s

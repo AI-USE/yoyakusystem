@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Pinky Maid Service</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+    <script src="https://unpkg.com/@supabase/supabase-js@2"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <script src="https://unpkg.com/qrcode-generator@1.4.4/qrcode.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/dayjs@1/dayjs.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/dayjs@1/plugin/timezone.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/dayjs@1/plugin/utc.js"></script>
+    <script>
+        dayjs.extend(window.dayjs_plugin_utc);
+        dayjs.extend(window.dayjs_plugin_timezone);
+        dayjs.tz.setDefault("Asia/Tokyo");
+    </script>
+    <link href="https://fonts.googleapis.com/css2?family=M+PLUS+Rounded+1c:wght@400;700;900&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --primary-pink: #ffb7c5;
+            --soft-white: rgba(255, 255, 255, 0.7);
+        }
+        body {
+            background: radial-gradient(circle at top right, #fff0f3, #ffe0e9);
+            font-family: 'M PLUS Rounded 1c', sans-serif;
+            color: #2d2d2d;
+            min-height: 100vh;
+        }
+        .glass-card {
+            background: var(--soft-white);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            border: 1px solid rgba(255, 255, 255, 0.4);
+            border-radius: 32px;
+            box-shadow: 0 10px 40px rgba(255, 183, 197, 0.15);
+        }
+        .maid-btn {
+            background: linear-gradient(135deg, #ffb7c5, #ff8fa3);
+            color: white;
+            border-radius: 9999px;
+            box-shadow: 0 8px 20px rgba(255, 143, 163, 0.3);
+            transition: all 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+        }
+        .maid-btn:active { transform: scale(0.95); }
+        
+        /* Glitch Layer */
+        #scary-layer {
+            display: none;
+            position: fixed;
+            inset: 0;
+            z-index: 100;
+            background: rgba(127, 0, 0, 0.2);
+            pointer-events: none;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+        }
+        .glitch-text {
+            color: #ff0000;
+            font-size: 15vw;
+            font-weight: 900;
+            opacity: 0.3;
+            animation: glitch 0.1s infinite;
+        }
+        @keyframes glitch {
+            0% { transform: translate(0); }
+            20% { transform: translate(-2px, 2px); }
+            40% { transform: translate(2px, -2px); }
+            60% { transform: translate(-2px, -2px); }
+            80% { transform: translate(2px, 2px); }
+            100% { transform: translate(0); }
+        }
+        .loading-heart {
+            animation: pulse 1.5s infinite;
+        }
+        @keyframes pulse {
+            0%, 100% { transform: scale(1); opacity: 1; }
+            50% { transform: scale(1.2); opacity: 0.5; }
+        }
+        .hidden { display: none !important; }
+    </style>
+</head>
+<body class="p-5 pb-24 max-w-md mx-auto">
+
+    <!-- Loading Screen -->
+    <div id="loading-screen" class="fixed inset-0 bg-[#fff5f7] z-[200] flex flex-col items-center justify-center">
+        <div class="loading-heart text-pink-400 mb-4">
+            <i data-lucide="heart" size="64" fill="currentColor"></i>
+        </div>
+        <p class="text-pink-300 font-bold tracking-widest text-sm">LOADING...</p>
+    </div>
+
+    <!-- Main Content -->
+    <div id="main-content" class="hidden">
+        <header class="flex justify-between items-center mb-8">
+            <div>
+                <h1 id="brand-name" class="text-2xl font-black tracking-tighter text-pink-500">Pinky Maid ♡</h1>
+                <p class="text-[10px] font-bold text-pink-300 uppercase tracking-[0.2em]">Service Reservation</p>
+            </div>
+            <button id="refresh-btn" class="p-3 rounded-full glass-card text-pink-400 active:scale-90 transition-all">
+                <i data-lucide="refresh-cw" size="20"></i>
+            </button>
+        </header>
+
+        <div class="mb-8 px-2">
+            <p class="text-sm text-gray-400">ようこそ</p>
+            <p class="text-xl font-bold text-gray-700"><span id="user-name">ご主人様・お嬢様</span> <span class="text-pink-400 text-sm">様♡</span></p>
+        </div>
+
+        <!-- Notifications Container -->
+        <div id="notifications" class="mb-8 space-y-3"></div>
+
+        <!-- Banned View -->
+        <div id="banned-view" class="glass-card p-12 text-center hidden">
+            <div class="text-red-500 mb-6 flex justify-center">
+                <i data-lucide="shield-off" size="64"></i>
+            </div>
+            <h2 class="text-2xl font-black text-gray-800 mb-4">利用停止中</h2>
+            <p class="text-sm font-bold text-gray-400 leading-relaxed">
+                誠に申し訳ございませんが、ご主人様のアカウントは現在ご利用いただけません。<br>詳細は会場スタッフまでお問い合わせください。
+            </p>
+        </div>
+
+        <!-- Reservation View (Ticket) -->
+        <div id="reservation-view" class="glass-card p-8 text-center relative overflow-hidden hidden">
+            <div id="status-badge" class="absolute top-0 right-0 bg-gradient-to-l from-pink-500 to-pink-400 text-white px-5 py-2 rounded-bl-[24px] text-[10px] font-black uppercase tracking-widest shadow-lg"></div>
+            <div class="mt-4 mb-8">
+                <div id="qrcode" class="bg-white p-6 rounded-[40px] inline-block shadow-2xl shadow-pink-100 border-4 border-pink-50"></div>
+            </div>
+            <div class="space-y-2 mb-8">
+                <p id="ticket-number" class="text-4xl font-black text-gray-800 tracking-tighter"></p>
+                <div id="ticket-time" class="flex items-center justify-center gap-2 text-pink-500 font-black text-lg"></div>
+            </div>
+            <button id="cancel-btn" class="text-xs text-gray-300 font-bold hover:text-red-400 transition-colors py-2">予約をキャンセルする</button>
+        </div>
+
+        <!-- Slot Selection View -->
+        <div id="slot-selection-view">
+            <h2 class="text-sm font-black text-pink-300 uppercase tracking-[0.3em] flex items-center px-2 mb-6">
+                <i data-lucide="calendar" size="16" class="mr-2"></i> Select Time Slot
+            </h2>
+            <div id="slots-container" class="space-y-4"></div>
+        </div>
+
+        <!-- General QR Button -->
+        <div id="general-qr-btn-container" class="fixed bottom-8 left-0 right-0 px-8 flex justify-center pointer-events-none">
+            <button id="open-general-qr" class="maid-btn w-full max-w-xs pointer-events-auto py-4 font-black flex items-center justify-center shadow-2xl">
+                <i data-lucide="qr-code" class="mr-3"></i> 通常受付QRを表示
+            </button>
+        </div>
+    </div>
+
+    <!-- General QR Modal -->
+    <div id="general-qr-modal" class="fixed inset-0 z-[150] hidden flex items-center justify-center p-6">
+        <div class="absolute inset-0 bg-pink-900/40 backdrop-blur-md"></div>
+        <div class="bg-white w-full max-w-sm rounded-[50px] p-10 text-center relative shadow-2xl z-10">
+            <button id="close-modal" class="absolute top-6 right-6 p-2 text-gray-300 hover:text-pink-400">
+                <i data-lucide="x" size="28"></i>
+            </button>
+            <h3 class="text-2xl font-black text-gray-800 mb-2">通常受付</h3>
+            <p class="text-[10px] text-pink-300 font-bold uppercase tracking-[0.2em] mb-8">General Reception QR</p>
+            <div id="general-qrcode" class="bg-gray-50 p-6 rounded-[40px] inline-block mb-8 border-2 border-dashed border-pink-100"></div>
+            <p class="text-xs text-gray-500 font-bold leading-relaxed">このQRコードをスタッフに提示してください。</p>
+        </div>
+    </div>
+
+    <!-- Scary Layer -->
+    <div id="scary-layer">
+        <div class="glitch-text">逃がさない</div>
+    </div>
+
+    <!-- Add Sound Effect for scary mode if desired (Optional) -->
+    <script src="config/config.js"></script>
+    <script src="js/app.js"></script>
+</body>
+</html>
