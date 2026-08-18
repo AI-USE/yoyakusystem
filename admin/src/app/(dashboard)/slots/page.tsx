@@ -475,7 +475,7 @@ export default function SlotsPage() {
                       onClick={() => handleDeleteSlot(slot.id)}
                       className="text-red-600 hover:text-red-900"
                     >
-                      <Trash2 size={16} />
+                      <Trash2 size={18} />
                     </button>
                   </td>
                 </tr>
@@ -617,13 +617,13 @@ export default function SlotsPage() {
             <div className="bg-white w-full max-w-lg rounded-2xl shadow-2xl relative z-10 p-6">
                 <h3 className="text-xl font-bold text-slate-800 mb-2">予約枠公開パターン (JSON) 一括登録</h3>
                 <p className="text-xs text-slate-400 font-bold mb-4">
-                    配列形式で <code>start_time</code>, <code>end_time</code>, <code>capacity</code>, <code>publish_at</code> (任意) を設定したJSONを入力してください。
+                    配列形式で start_time, end_time, capacity, publish_at (任意) を設定したJSONを入力してください。
                 </p>
 
                 <textarea
                     value={jsonInput}
                     onChange={(e) => setJsonInput(e.target.value)}
-                    placeholder={`[\n  {\n    "start_time": "2026-05-10T14:00:00+09:00",\n    "end_time": "2026-05-10T15:00:00+09:00",\n    "capacity": 10,\n    "publish_at": "2026-05-01T12:00:00+09:00"\n  }\n]`}
+                    placeholder={'[\n  {\n    "start_time": "2026-05-10T14:00:00+09:00",\n    "end_time": "2026-05-10T15:00:00+09:00",\n    "capacity": 10,\n    "publish_at": "2026-05-01T12:00:00+09:00"\n  }\n]'}
                     className="w-full h-48 border-slate-200 rounded-xl font-mono text-xs p-3 focus:ring-indigo-500 focus:border-indigo-500"
                 />
 
@@ -657,7 +657,7 @@ export default function SlotsPage() {
                 {resetStep === 1 && (
                     <div className="space-y-4">
                         <p className="text-sm font-bold text-slate-700 leading-relaxed">
-                            登録されているすべての予約枠、予約データ、お知らせ、招待リンクが完全に全消去されます。<br>この操作は取り消せません。本当によろしいですか？
+                            登録されているすべての予約枠、予約データ、お知らせ、招待リンクが完全に全消去されます。この操作は取り消せません。本当によろしいですか？
                         </p>
                         <button
                             onClick={() => setResetStep(2)}
