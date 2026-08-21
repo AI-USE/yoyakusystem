@@ -6,10 +6,10 @@ import { supabaseAdmin } from '@/lib/supabase';
  * Fetch initial data for slots page
  */
 export async function getSlotsData() {
-    // Optimization: Use pre-aggregated view to reduce server-side JS processing
+    // Selective columns to minimize SQL network data transfer
     const { data, error } = await supabaseAdmin
         .from('slot_availability')
-        .select('id, start_time, end_time, capacity, reserved_count, is_cancelled')
+        .select('id, start_time, end_time, capacity, reserved_count, is_cancelled, publish_at')
         .order('start_time', { ascending: true });
     
     if (error) {
