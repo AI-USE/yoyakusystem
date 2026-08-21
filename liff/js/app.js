@@ -7,6 +7,36 @@ let currentReservation = null;
 // Initialize Lucide Icons
 lucide.createIcons();
 
+function getInviteToken() {
+    // 1. Direct query parameter: ?invite=TOKEN
+    const searchParams = new URLSearchParams(window.location.search);
+    let token = searchParams.get('invite');
+    if (token) return token;
+
+    // 2. LIFF URL state query parameter: ?liff.state=%3Finvite%3DTOKEN or liff.state=?invite=TOKEN
+    const liffState = searchParams.get('liff.state');
+    if (liffState) {
+        try {
+            const decodedState = decodeURIComponent(liffState);
+            const stateParams = new URLSearchParams(decodedState.startsWith('?') ? decodedState : '?' + decodedState);
+            token = stateParams.get('invite');
+            if (token) return token;
+        } catch (e) {
+            console.error('Failed to parse liff.state:', e);
+        }
+    }
+
+    // 3. Hash parameter fallback: #invite=TOKEN or #?invite=TOKEN
+    if (window.location.hash) {
+        const hashStr = window.location.hash.replace(/^#\??/, '');
+        const hashParams = new URLSearchParams(hashStr);
+        token = hashParams.get('invite');
+        if (token) return token;
+    }
+
+    return null;
+}
+
 async function init() {
     try {
         await liff.init({ liffId: CONFIG.LIFF_ID });
@@ -18,6 +48,12 @@ async function init() {
         document.getElementById('user-name').textContent = userProfile.displayName;
         
         await fetchData();
+
+        // Check for invitation token parameter across direct query, LIFF state, and hash
+        const inviteToken = getInviteToken();
+        if (inviteToken) {
+            await handleInviteToken(inviteToken);
+        }
         
         document.getElementById('loading-screen').classList.add('hidden');
         document.getElementById('main-content').classList.remove('hidden');
@@ -48,21 +84,44 @@ async function fetchData() {
         return;
     }
 
-    // 1. Fetch Slots (Filter for Today, Not started, and using availability view if possible)
-    const now = dayjs().toISOString();
-    const endOfDay = dayjs().endOf('day').toISOString();
+    // 1. Fetch Slots (Fetch today's active slots and filter in JS)
+    const now = dayjs();
+    const endOfDay = now.endOf('day').toISOString();
     
-    // We use the availability view to get reserved_count efficiently
-    const { data: slots } = await supabaseClient
+    const { data: rawSlots, error: slotsErr } = await supabaseClient
         .from('slot_availability')
-        .select('id, start_time, end_time, capacity, reserved_count')
+        .select('id, start_time, end_time, capacity, reserved_count, publish_at, is_cancelled')
         .eq('is_cancelled', false)
-        .gt('start_time', now) 
+        .gte('end_time', now.toISOString())
         .lte('start_time', endOfDay)
         .order('start_time', { ascending: true });
 
-    window.allSlots = slots || [];
-    renderSlots(slots || []);
+    if (slotsErr) {
+        console.error('Failed to fetch slots:', slotsErr);
+    }
+
+    // Filter slots: Display slot if publish_at is null, OR publish_at <= now, OR if slot belongs to today and publish_at equals start_time
+    const publishedSlots = (rawSlots || []).filter(s => {
+        if (s.is_cancelled) return false;
+
+        const isNotEnded = dayjs(s.end_time).isAfter(now);
+        if (!isNotEnded) return false;
+
+        // Display if no publish_at specified
+        if (!s.publish_at) return true;
+
+        // Display if publish_at timestamp has been reached
+        const isPublishedByTime = !dayjs(s.publish_at).isAfter(now);
+
+        // Display if publish_at was set equal to start_time for a slot today
+        const isSameDaySlot = dayjs(s.start_time).isSame(now, 'day');
+        const isPublishAtStart = dayjs(s.publish_at).isSame(dayjs(s.start_time));
+
+        return isPublishedByTime || (isSameDaySlot && isPublishAtStart);
+    });
+
+    window.allSlots = publishedSlots;
+    renderSlots(publishedSlots);
 
     // 2. Fetch Reservation
     const { data: res } = await supabaseClient
@@ -87,31 +146,91 @@ async function fetchData() {
     
     renderNotifications(notes || []);
 
-    // 4. Fetch Global Settings (Finished URL)
+    // 4. Fetch Global Settings (Finished URL fallback to CONFIG.FINISHED_URL)
     const { data: settings } = await supabaseClient
         .from('global_settings')
         .select('value')
         .eq('key', 'finished_url')
         .maybeSingle();
-    window.finishedUrl = settings?.value || 'https://example.com/finished';
+    window.finishedUrl = settings?.value || CONFIG.FINISHED_URL || 'https://example.com/finished';
+}
+
+async function handleInviteToken(token) {
+    if (currentReservation) {
+        alert('すでに予約済みのため、招待リンクはご利用いただけません。');
+        return;
+    }
+
+    const { data: inv, error } = await supabaseClient
+        .from('invitations')
+        .select('id, slot_id, status, expires_at, slots(start_time, end_time)')
+        .eq('token', token)
+        .maybeSingle();
+
+    if (error || !inv) {
+        alert('無効な招待リンクです。');
+        return;
+    }
+
+    if (inv.status !== 'pending' || dayjs(inv.expires_at).isBefore(dayjs())) {
+        alert('この招待リンクは有効期限切れか既に利用されています。');
+        return;
+    }
+
+    const slot = Array.isArray(inv.slots) ? inv.slots[0] : inv.slots;
+    if (!slot) {
+        alert('対象の予約枠が見つかりません。');
+        return;
+    }
+
+    const start = dayjs(slot.start_time).tz("Asia/Tokyo").format('HH:mm');
+    const end = dayjs(slot.end_time).tz("Asia/Tokyo").format('HH:mm');
+
+    const modal = document.getElementById('general-qr-modal');
+    const qrContainer = document.getElementById('general-qrcode');
+    const modalTitle = modal.querySelector('h3');
+    const modalDesc = modal.querySelector('p.text-xs');
+
+    qrContainer.innerHTML = `
+        <div class="my-4">
+            <button id="redeem-invite-btn" class="maid-btn w-full py-4 px-6 text-base font-black shadow-lg active:scale-95 transition-all">
+                【${start} 〜 ${end}】<br>この枠で予約を確定する
+            </button>
+        </div>
+    `;
+
+    modalTitle.textContent = '招待限定予約';
+    modalDesc.innerHTML = `特別招待枠（確定保留中）です。<br>上のボタンを押して予約を完了させてください。`;
+    modal.classList.remove('hidden');
+
+    document.getElementById('redeem-invite-btn').onclick = async () => {
+        const { data, error: rpcErr } = await supabaseClient.rpc('redeem_invitation', {
+            p_token: token,
+            p_line_user_id: userProfile.userId,
+            p_user_name: userProfile.displayName
+        });
+
+        if (rpcErr || !data.success) {
+            alert(data?.message || rpcErr?.message || '予約の完了に失敗しました。');
+            return;
+        }
+
+        alert('招待予約が完了しました！');
+        modal.classList.add('hidden');
+        await fetchData();
+    };
 }
 
 function renderSlots(slots) {
     const container = document.getElementById('slots-container');
     container.innerHTML = '';
-    
-    // Filter slots to only show those that aren't full (started/today already handled by fetch)
-    const availableSlots = slots.filter(slot => {
-        const remaining = slot.capacity - (slot.reserved_count || 0);
-        return remaining > 0;
-    });
 
-    if (availableSlots.length === 0) {
+    if (!slots || slots.length === 0) {
         container.innerHTML = `<div class="glass-card p-12 text-center text-gray-400 font-bold">予約可能な空き枠はありません</div>`;
         return;
     }
 
-    availableSlots.forEach(slot => {
+    slots.forEach(slot => {
         const remaining = slot.capacity - (slot.reserved_count || 0);
         const isFull = remaining <= 0;
         const start = dayjs(slot.start_time).tz("Asia/Tokyo").format('HH:mm');
@@ -191,7 +310,7 @@ function renderReservation(res) {
                     <p class="text-[10px] text-pink-400 font-bold animate-pulse">お楽しみ中 ♡</p>
                 `;
             } else {
-                actionContainer.innerHTML = `<p class="text-xs text-gray-400 font-bold">URL発行をお待ちください...</p>`;
+                actionContainer.innerHTML = `<p class="text-xs text-gray-400 font-bold">メニューURL発行なしで入場済みです</p>`;
             }
             resView.appendChild(actionContainer);
 
@@ -241,7 +360,6 @@ function renderNotifications(notes) {
 async function handleReserve(slotId) {
     if (currentReservation) return;
     
-    // 予約はDBを直接変更せず、情報付きQRを表示するだけに変更
     const selectedSlot = window.allSlots.find(s => s.id === slotId);
     if (!selectedSlot) return;
 
@@ -252,7 +370,6 @@ async function handleReserve(slotId) {
     
     qrContainer.innerHTML = '';
     const qr = qrcode(0, 'M');
-    // フォーマット: RESERVE:SLOT_ID:LINE_USER_ID:USER_NAME
     qr.addData(`RESERVE:${slotId}:${userProfile.userId}:${userProfile.displayName}`);
     qr.make();
     qrContainer.innerHTML = qr.createImgTag(6);
@@ -273,7 +390,6 @@ async function handleCancel() {
     }
     if (!confirm('キャンセルしますか？')) return;
     
-    // RLS許可された直接のSQL更新
     const { error } = await supabaseClient
         .from('reservations')
         .update({ status: 'cancelled', updated_at: new Date().toISOString() })

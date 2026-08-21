@@ -1,7 +1,7 @@
 'use server';
 
 import { supabaseAdmin } from '@/lib/supabase';
-import { createExperienceRoom, createExperienceGuest } from '@/lib/experience-api';
+import { createExperienceRoom, createExperienceGuest, createExperienceGuestDetailed } from '@/lib/experience-api';
 import { revalidatePath } from 'next/cache';
 
 // Uniform response type
@@ -11,18 +11,24 @@ export type ActionResponse = {
   data?: any;
 };
 
-export async function createSlot(formData: { start_time: string, end_time: string, capacity: number }): Promise<ActionResponse> {
-  try {
-    // 1. Create Experience Room first with strict JST formatted time name
-    const jstDate = new Date(new Date(formData.start_time).getTime() + 9 * 60 * 60 * 1000);
-    const startTimeStr = jstDate.getUTCHours().toString().padStart(2, '0') + ':' + jstDate.getUTCMinutes().toString().padStart(2, '0');
-    
-    const roomId = await createExperienceRoom(`${startTimeStr}の回`);
+// Naming helper for JST date and time (e.g., "5月10日 14:00の回")
+function formatSlotRoomName(startTimeIso: string): string {
+  const jstDate = new Date(new Date(startTimeIso).getTime() + 9 * 60 * 60 * 1000);
+  const month = jstDate.getUTCMonth() + 1;
+  const day = jstDate.getUTCDate();
+  const hours = jstDate.getUTCHours().toString().padStart(2, '0');
+  const minutes = jstDate.getUTCMinutes().toString().padStart(2, '0');
+  return `${month}月${day}日 ${hours}:${minutes}の回`;
+}
 
-    // 2. Insert slot with room_id
+export async function createSlot(formData: { start_time: string, end_time: string, capacity: number, publish_at?: string }): Promise<ActionResponse> {
+  try {
+    // 1. Insert slot without pre-creating room (Room will be created lazily on first check-in)
+    const nowIso = new Date().toISOString();
     const { error } = await supabaseAdmin.from('slots').insert({
         ...formData,
-        room_id: roomId // Store the UUID from the experience API
+        publish_at: formData.publish_at || nowIso,
+        room_id: null
     });
 
     if (error) return { success: false, message: `枠の作成に失敗しました: ${error.message}` };
@@ -41,23 +47,18 @@ export async function deleteSlot(id: string): Promise<ActionResponse> {
   return { success: true, message: '枠を削除しました' };
 }
 
-import { createExperienceGuestDetailed } from '@/lib/experience-api';
-
 async function issueExperienceUrl(userName: string, roomId: string | null, slotId: string): Promise<{ success: boolean; url: string | null; error?: string }> {
   let activeRoomId = roomId;
 
-  // 万が一、枠作成時に部屋作成が失敗してroom_idがNULLの場合、入場時に自動で部屋をオンデマンド作成して救済
+  // 万が一/初回チェックイン時に部屋が未作成(room_idがNULL)の場合、オンデマンドで1回のみ部屋を作成しDBに保存・再利用
   if (!activeRoomId) {
     try {
       const { data: slot } = await supabaseAdmin.from('slots').select('start_time').eq('id', slotId).single();
       if (slot) {
-        const jstDate = new Date(new Date(slot.start_time).getTime() + 9 * 60 * 60 * 1000);
-        const startTimeStr = jstDate.getUTCHours().toString().padStart(2, '0') + ':' + jstDate.getUTCMinutes().toString().padStart(2, '0');
-        
-        const newRoomId = await createExperienceRoom(`${startTimeStr}の回`);
+        const roomName = formatSlotRoomName(slot.start_time);
+        const newRoomId = await createExperienceRoom(roomName);
         if (newRoomId) {
           activeRoomId = newRoomId;
-          // DBに保存して次回以降のチェックインでも再利用可能にする
           await supabaseAdmin.from('slots').update({ room_id: newRoomId }).eq('id', slotId);
         }
       }
@@ -79,10 +80,8 @@ async function issueExperienceUrl(userName: string, roomId: string | null, slotI
 
 export async function checkInReservation(idOrToken: string, expectedSlotId?: string): Promise<ActionResponse> {
   try {
-    // Both ID and Token are UUID-like in this system, so we check both columns
     const query = supabaseAdmin.from('reservations').select('id, status, slot_id, user_name, line_user_id, slots(id, start_time, room_id)');
     
-    // Safety check for UUID format before querying to avoid DB errors
     const isUUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(idOrToken);
     if (!isUUID) return { success: false, message: '無効な形式のコードです' };
 
@@ -93,7 +92,6 @@ export async function checkInReservation(idOrToken: string, expectedSlotId?: str
     if (fetchError || !current) return { success: false, message: '予約データが見つかりません' };
     if (current.status === 'checked_in') return { success: false, message: '既に受付済みです' };
 
-    // 枠の一致チェック
     const slot = Array.isArray(current.slots) ? current.slots[0] : current.slots;
     
     if (expectedSlotId && current.slot_id !== expectedSlotId) {
@@ -101,13 +99,15 @@ export async function checkInReservation(idOrToken: string, expectedSlotId?: str
         return { success: false, message: `枠が異なります（予約: ${slotTime}の回）` };
     }
 
-    // 体験URLの発行処理（万が一失敗した場合は、エラーメッセージと原因をフロントへ返却して入場をロールバック）
+    let experienceUrl: string | null = null;
+    let urlWarning = '';
     const urlResult = await issueExperienceUrl(current.user_name || 'ゲスト', slot.room_id, current.slot_id);
-    if (!urlResult.success || !urlResult.url) {
-        return { success: false, message: urlResult.error || '体験URLの発行に失敗しました' };
-    }
 
-    const experienceUrl = urlResult.url;
+    if (!urlResult.success || !urlResult.url) {
+        urlWarning = ` (※体験URL発行失敗: ${urlResult.error || '不明なエラー'})`;
+    } else {
+        experienceUrl = urlResult.url;
+    }
     
     const { error } = await supabaseAdmin
         .from('reservations')
@@ -122,7 +122,11 @@ export async function checkInReservation(idOrToken: string, expectedSlotId?: str
     
     revalidatePath('/reception');
     revalidatePath('/settings');
-    return { success: true, message: '入場を受け付けました', data: { experienceUrl } };
+    return {
+      success: true,
+      message: `入場を受け付けました${urlWarning}`,
+      data: { experienceUrl }
+    };
   } catch (err: any) {
     return { success: false, message: `システムエラー: ${err.message}` };
   }
@@ -130,7 +134,6 @@ export async function checkInReservation(idOrToken: string, expectedSlotId?: str
 
 export async function finalizeReservation(slotId: string, userName: string, lineUserId: string | null, status: 'reserved' | 'checked_in' = 'reserved'): Promise<ActionResponse> {
     try {
-        // Atomic check via RPC (we can reuse reserve_slot or use direct insert with error handling)
         const { data, error } = await supabaseAdmin.rpc('reserve_slot', {
             p_slot_id: slotId,
             p_line_user_id: lineUserId,
@@ -142,18 +145,17 @@ export async function finalizeReservation(slotId: string, userName: string, line
 
         const reservationId = data.id;
 
-        // If status is checked_in, issue URL
+        let warning = '';
         if (status === 'checked_in') {
-            // Need roomId from slot
             const { data: slot } = await supabaseAdmin.from('slots').select('id, room_id, start_time').eq('id', slotId).single();
             
-            // 体験URLの発行（万が一失敗した場合は、エラーメッセージを投げて予約挿入自体をロールバック/エラー扱いにする）
+            let experienceUrl: string | null = null;
             const urlResult = await issueExperienceUrl(userName, slot?.room_id || null, slotId);
             if (!urlResult.success || !urlResult.url) {
-                return { success: false, message: urlResult.error || '体験用URLの発行に失敗しました' };
+                warning = ` (※体験URL発行失敗: ${urlResult.error || '不明なエラー'})`;
+            } else {
+                experienceUrl = urlResult.url;
             }
-
-            const experienceUrl = urlResult.url;
             
             await supabaseAdmin.from('reservations').update({ 
                 status: 'checked_in', 
@@ -164,7 +166,10 @@ export async function finalizeReservation(slotId: string, userName: string, line
         revalidatePath('/reception');
         revalidatePath('/settings');
         revalidatePath('/slots');
-        return { success: true, message: status === 'checked_in' ? '受付と入場を完了しました' : '予約を確定しました' };
+        return {
+          success: true,
+          message: status === 'checked_in' ? `受付と入場を完了しました${warning}` : '予約を確定しました'
+        };
     } catch (err: any) {
         return { success: false, message: `システムエラー: ${err.message}` };
     }
@@ -188,7 +193,6 @@ export async function slideSlots(mins: number, mode: 'single' | 'cascade' = 'cas
                 if (following) slotsToUpdate = [...slotsToUpdate, ...following];
             }
         } else {
-            // Slide all future slots if no target ID
             const now = new Date().toISOString();
             const { data: upcoming, error: upcomingError } = await supabaseAdmin
                 .from('slots')
@@ -253,7 +257,6 @@ export async function updateReservationStatus(id: string, status: string): Promi
 }
 
 export async function reassignReservation(reservationId: string, newSlotId: string): Promise<ActionResponse> {
-    // Check capacity of new slot
     const { data: slot, error: slotErr } = await supabaseAdmin.from('slots').select('capacity, reservations(status)').eq('id', newSlotId).single();
     if (slotErr || !slot) return { success: false, message: '移動先の枠が見つかりません' };
 
@@ -272,4 +275,97 @@ export async function deleteNotification(id: string): Promise<ActionResponse> {
     if (error) return { success: false, message: `削除に失敗しました: ${error.message}` };
     revalidatePath('/notifications');
     return { success: true, message: '通知を削除しました' };
+}
+
+// 招待URL発行
+export async function createInvitation(slotId: string, durationMinutes: number = 30): Promise<ActionResponse> {
+    try {
+        const expiresAt = new Date(Date.now() + durationMinutes * 60000).toISOString();
+        const { data, error } = await supabaseAdmin
+            .from('invitations')
+            .insert({ slot_id: slotId, expires_at: expiresAt })
+            .select('token, expires_at')
+            .single();
+
+        if (error) return { success: false, message: `招待リンク作成失敗: ${error.message}` };
+
+        const baseUrl = process.env.NEXT_PUBLIC_BASE_URL || 'https://liff.line.me/YOUR_LIFF_ID';
+        const inviteUrl = `${baseUrl}?invite=${data.token}`;
+
+        return {
+            success: true,
+            message: '招待リンクを発行しました',
+            data: { inviteUrl, token: data.token, expiresAt: data.expires_at }
+        };
+    } catch (err: any) {
+        return { success: false, message: `システムエラー: ${err.message}` };
+    }
+}
+
+// 招待URLの取り消し・削除
+export async function deleteInvitation(id: string): Promise<ActionResponse> {
+    try {
+        const { error } = await supabaseAdmin.from('invitations').delete().eq('id', id);
+        if (error) return { success: false, message: `招待リンクの削除に失敗しました: ${error.message}` };
+        revalidatePath('/slots');
+        return { success: true, message: '招待リンクを取り消しました' };
+    } catch (err: any) {
+        return { success: false, message: `エラー: ${err.message}` };
+    }
+}
+
+// 予約枠パターン (JSON) 一括登録
+export async function importSlotsPattern(patternJson: string): Promise<ActionResponse> {
+    try {
+        const slotsArray = JSON.parse(patternJson);
+        if (!Array.isArray(slotsArray)) {
+            return { success: false, message: 'JSONデータは配列形式である必要があります。' };
+        }
+
+        for (const item of slotsArray) {
+            if (!item.start_time || !item.end_time || typeof item.capacity !== 'number') {
+                return { success: false, message: '各要素に start_time, end_time, capacity が含まれているか確認してください。' };
+            }
+        }
+
+        const nowIso = new Date().toISOString();
+        const inserts = slotsArray.map(item => ({
+            start_time: item.start_time,
+            end_time: item.end_time,
+            capacity: item.capacity,
+            publish_at: item.publish_at || nowIso,
+            room_id: null
+        }));
+
+        const { error } = await supabaseAdmin.from('slots').insert(inserts);
+        if (error) return { success: false, message: `一括登録失敗: ${error.message}` };
+
+        revalidatePath('/slots');
+        return { success: true, message: `${inserts.length}件の予約枠を正常に登録しました` };
+    } catch (err: any) {
+        return { success: false, message: `JSON解析/登録エラー: ${err.message}` };
+    }
+}
+
+// 予約枠オールリセット (要管理者パスワード)
+export async function resetAllSlots(password: string): Promise<ActionResponse> {
+    try {
+        if (password !== process.env.ADMIN_PASSWORD) {
+            return { success: false, message: 'パスワードが正しくありません' };
+        }
+
+        await supabaseAdmin.from('reservations').delete().neq('id', '00000000-0000-0000-0000-000000000000');
+        await supabaseAdmin.from('notifications').delete().neq('id', '00000000-0000-0000-0000-000000000000');
+        await supabaseAdmin.from('invitations').delete().neq('id', '00000000-0000-0000-0000-000000000000');
+        const { error } = await supabaseAdmin.from('slots').delete().neq('id', '00000000-0000-0000-0000-000000000000');
+
+        if (error) return { success: false, message: `リセット失敗: ${error.message}` };
+
+        revalidatePath('/slots');
+        revalidatePath('/reception');
+        revalidatePath('/operations');
+        return { success: true, message: 'すべての予約枠とデータをリセットしました' };
+    } catch (err: any) {
+        return { success: false, message: `エラー: ${err.message}` };
+    }
 }

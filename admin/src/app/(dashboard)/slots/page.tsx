@@ -3,10 +3,11 @@
 import { useState, useEffect, useCallback } from 'react';
 import { format } from 'date-fns';
 import { ja } from 'date-fns/locale';
-import { Plus, Trash2, Search, ArrowUpDown, RefreshCw, Users as UsersIcon, X, UserX } from 'lucide-react';
-import { createSlot, deleteSlot, updateReservationStatus, slideSlots, reassignReservation, toggleSlotCancel, addToBlacklist } from '@/actions/admin-actions';
-import { getSlotsData, getReservationsBySlot } from '@/actions/fetch-actions';
+import { Plus, Trash2, Search, ArrowUpDown, RefreshCw, Users as UsersIcon, X, UserX, QrCode, FileText, AlertTriangle, Key, History, Copy } from 'lucide-react';
+import { createSlot, deleteSlot, updateReservationStatus, slideSlots, reassignReservation, toggleSlotCancel, addToBlacklist, createInvitation, deleteInvitation, importSlotsPattern, resetAllSlots } from '@/actions/admin-actions';
+import { getSlotsData, getReservationsBySlot, getActiveInvitations } from '@/actions/fetch-actions';
 import toast from 'react-hot-toast';
+import { QRCodeSVG } from 'qrcode.react';
 
 export default function SlotsPage() {
   const [slots, setSlots] = useState<any[]>([]);
@@ -21,6 +22,7 @@ export default function SlotsPage() {
   const [newStartTime, setNewStartTime] = useState('');
   const [newEndTime, setNewEndTime] = useState('');
   const [newCapacity, setNewCapacity] = useState('10');
+  const [newPublishAt, setNewPublishAt] = useState('');
 
   // Per-slot management
   const [selectedSlot, setSelectedSlot] = useState<any>(null);
@@ -33,6 +35,26 @@ export default function SlotsPage() {
   const [slideSlotId, setSlideSlotId] = useState('');
   const [slideMins, setSlideMins] = useState('15');
   const [slideMode, setSlideMode] = useState<'single' | 'cascade'>('cascade');
+
+  // Invitation Modal
+  const [isInviteModalOpen, setIsInviteModalOpen] = useState(false);
+  const [inviteSlot, setInviteSlot] = useState<any>(null);
+  const [inviteDuration, setInviteDuration] = useState('30');
+  const [generatedInvite, setGeneratedInvite] = useState<{ url: string; expiresAt: string } | null>(null);
+
+  // Active Invitations History Modal
+  const [isHistoryModalOpen, setIsHistoryModalOpen] = useState(false);
+  const [activeInvitations, setActiveInvitations] = useState<any[]>([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
+
+  // JSON Import Modal
+  const [isJsonModalOpen, setIsJsonModalOpen] = useState(false);
+  const [jsonInput, setJsonInput] = useState('');
+
+  // All Reset Modal
+  const [isResetModalOpen, setIsResetModalOpen] = useState(false);
+  const [resetStep, setResetStep] = useState(1);
+  const [resetPassword, setResetPassword] = useState('');
 
   const fetchSlots = useCallback(async () => {
     setLoading(true);
@@ -63,14 +85,38 @@ export default function SlotsPage() {
     fetchSlots();
   }, [fetchSlots]);
 
+  const fetchInvitationsHistory = async () => {
+    setHistoryLoading(true);
+    const data = await getActiveInvitations();
+    setActiveInvitations(data);
+    setHistoryLoading(false);
+  };
+
+  const handleOpenHistoryModal = async () => {
+    setIsHistoryModalOpen(true);
+    await fetchInvitationsHistory();
+  };
+
+  const handleDeleteInvitation = async (id: string) => {
+    if (!confirm('この招待リンクを取り消してもよろしいですか？')) return;
+    const res = await deleteInvitation(id);
+    if (res.success) {
+        toast.success(res.message!);
+        await fetchInvitationsHistory();
+        fetchSlots();
+    } else {
+        toast.error(res.message!);
+    }
+  };
+
   const handleCreateSlot = async (e: React.FormEvent) => {
     e.preventDefault();
     
     const start = new Date(newStartTime);
     const end = new Date(newEndTime);
+    const publish = newPublishAt ? new Date(newPublishAt) : start;
     const now = new Date();
 
-    // Validations
     if (start < now) {
         toast.error('過去の時間は設定できません');
         return;
@@ -88,12 +134,14 @@ export default function SlotsPage() {
       start_time: start.toISOString(),
       end_time: end.toISOString(),
       capacity: parseInt(newCapacity),
+      publish_at: publish.toISOString(),
     });
 
     if (res.success) {
       toast.success(res.message!);
       setNewStartTime('');
       setNewEndTime('');
+      setNewPublishAt('');
       fetchSlots();
     } else {
       toast.error(res.message!);
@@ -193,6 +241,48 @@ export default function SlotsPage() {
     }
   };
 
+  const handleGenerateInvite = async () => {
+    if (!inviteSlot) return;
+    const res = await createInvitation(inviteSlot.id, parseInt(inviteDuration));
+    if (res.success && res.data) {
+        setGeneratedInvite({ url: res.data.inviteUrl, expiresAt: res.data.expiresAt });
+        toast.success('招待URLを発行しました');
+        fetchSlots();
+    } else {
+        toast.error(res.message!);
+    }
+  };
+
+  const handleImportJson = async () => {
+    if (!jsonInput.trim()) return;
+    const res = await importSlotsPattern(jsonInput);
+    if (res.success) {
+        toast.success(res.message!);
+        setIsJsonModalOpen(false);
+        setJsonInput('');
+        fetchSlots();
+    } else {
+        toast.error(res.message!);
+    }
+  };
+
+  const handleExecuteReset = async () => {
+    if (!resetPassword) {
+        toast.error('パスワードを入力してください');
+        return;
+    }
+    const res = await resetAllSlots(resetPassword);
+    if (res.success) {
+        toast.success(res.message!);
+        setIsResetModalOpen(false);
+        setResetStep(1);
+        setResetPassword('');
+        fetchSlots();
+    } else {
+        toast.error(res.message!);
+    }
+  };
+
   const toggleSort = (column: string) => {
     if (sortBy === column) {
       setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc');
@@ -211,14 +301,36 @@ export default function SlotsPage() {
 
   return (
     <div className="p-6">
-      <h1 className="text-2xl font-bold mb-6">時間枠管理</h1>
+      <div className="flex justify-between items-center mb-6">
+        <h1 className="text-2xl font-bold">時間枠管理</h1>
+        <div className="flex gap-2">
+            <button
+                onClick={handleOpenHistoryModal}
+                className="bg-pink-600 text-white px-3 py-2 rounded-lg text-xs font-bold flex items-center hover:bg-pink-700"
+            >
+                <History size={16} className="mr-1.5" /> 発行履歴（有効な招待）
+            </button>
+            <button
+                onClick={() => setIsJsonModalOpen(true)}
+                className="bg-slate-800 text-white px-3 py-2 rounded-lg text-xs font-bold flex items-center hover:bg-slate-700"
+            >
+                <FileText size={16} className="mr-1.5" /> パターンJSON一括登録
+            </button>
+            <button
+                onClick={() => { setIsResetModalOpen(true); setResetStep(1); }}
+                className="bg-red-600 text-white px-3 py-2 rounded-lg text-xs font-bold flex items-center hover:bg-red-700"
+            >
+                <AlertTriangle size={16} className="mr-1.5" /> オールリセット
+            </button>
+        </div>
+      </div>
 
       {/* Create New Slot */}
       <div className="bg-white p-6 rounded-lg shadow-sm mb-8 border border-gray-100">
         <h2 className="text-lg font-semibold mb-4 flex items-center">
           <Plus className="mr-2" size={20} /> 新規枠作成
         </h2>
-        <form onSubmit={handleCreateSlot} className="grid grid-cols-1 md:grid-cols-4 gap-4 items-end">
+        <form onSubmit={handleCreateSlot} className="grid grid-cols-1 md:grid-cols-5 gap-4 items-end">
           <div>
             <label className="block text-sm font-medium text-gray-700">開始時間</label>
             <input
@@ -237,6 +349,15 @@ export default function SlotsPage() {
               value={newEndTime}
               onChange={(e) => setNewEndTime(e.target.value)}
               required
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700">公開日時 (任意)</label>
+            <input
+              type="datetime-local"
+              className="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 text-xs"
+              value={newPublishAt}
+              onChange={(e) => setNewPublishAt(e.target.value)}
             />
           </div>
           <div>
@@ -309,7 +430,7 @@ export default function SlotsPage() {
                   日時 <ArrowUpDown size={14} className="ml-1" />
                 </div>
               </th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">定員 / 予約数</th>
+              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">定員 / 予約(仮確保含)</th>
               <th 
                 className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100"
                 onClick={() => toggleSort('capacity')}
@@ -318,17 +439,19 @@ export default function SlotsPage() {
                   残り数 <ArrowUpDown size={14} className="ml-1" />
                 </div>
               </th>
+              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">公開状況</th>
               <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">状態</th>
               <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">操作</th>
             </tr>
           </thead>
           <tbody className="bg-white divide-y divide-gray-200">
             {loading ? (
-              <tr><td colSpan={5} className="px-6 py-4 text-center">読み込み中...</td></tr>
+              <tr><td colSpan={6} className="px-6 py-4 text-center">読み込み中...</td></tr>
             ) : filteredSlots.length === 0 ? (
-              <tr><td colSpan={5} className="px-6 py-4 text-center">枠が見つかりません</td></tr>
+              <tr><td colSpan={6} className="px-6 py-4 text-center">枠が見つかりません</td></tr>
             ) : filteredSlots.map((slot) => {
               const remaining = slot.capacity - slot.reserved_count;
+              const isPublished = !slot.publish_at || new Date(slot.publish_at) <= new Date();
               return (
                 <tr key={slot.id} className={slot.is_cancelled ? 'bg-red-50' : ''}>
                   <td className="px-6 py-4 whitespace-nowrap">
@@ -348,6 +471,13 @@ export default function SlotsPage() {
                     </span>
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap">
+                    <span className={`px-2 py-1 text-xs font-semibold rounded-full ${
+                        isPublished ? 'bg-blue-50 text-blue-600' : 'bg-amber-50 text-amber-600'
+                    }`}>
+                        {isPublished ? '公開中' : `予約枠未公開 (${format(new Date(slot.publish_at), 'M/d HH:mm')}〜)`}
+                    </span>
+                  </td>
+                  <td className="px-6 py-4 whitespace-nowrap">
                     <button 
                         onClick={() => handleToggleCancel(slot)}
                         className={`px-2 py-1 text-xs font-semibold rounded-full transition-colors ${
@@ -357,18 +487,24 @@ export default function SlotsPage() {
                         {slot.is_cancelled ? '中止中' : '運用中'}
                     </button>
                   </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium space-x-4">
+                  <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium space-x-3">
+                    <button
+                      onClick={() => { setInviteSlot(slot); setGeneratedInvite(null); setIsInviteModalOpen(true); }}
+                      className="text-pink-600 hover:text-pink-800 inline-flex items-center text-xs font-bold"
+                    >
+                      <QrCode size={16} className="mr-1" /> 招待URL/QR
+                    </button>
                     <button 
                       onClick={() => handleOpenReservations(slot)}
-                      className="text-indigo-600 hover:text-indigo-900 inline-flex items-center"
+                      className="text-indigo-600 hover:text-indigo-900 inline-flex items-center text-xs font-bold"
                     >
-                      <UsersIcon size={18} className="mr-1" /> 名簿
+                      <UsersIcon size={16} className="mr-1" /> 名簿
                     </button>
                     <button 
                       onClick={() => handleOpenSlide(slot.id)}
-                      className="text-amber-600 hover:text-amber-900 inline-flex items-center"
+                      className="text-amber-600 hover:text-amber-900 inline-flex items-center text-xs font-bold"
                     >
-                      <ArrowUpDown size={18} className="mr-1" /> スライド
+                      <ArrowUpDown size={16} className="mr-1" /> スライド
                     </button>
                     <button 
                       onClick={() => handleDeleteSlot(slot.id)}
@@ -420,24 +556,24 @@ export default function SlotsPage() {
                   </div>
                 </div>
 
-                <div className="flex gap-2">
+                <div className="grid grid-cols-3 gap-2">
+                  <button 
+                    onClick={() => { setInviteSlot(slot); setGeneratedInvite(null); setIsInviteModalOpen(true); }}
+                    className="bg-pink-50 border border-pink-100 py-2.5 rounded-xl text-xs font-black text-pink-600 flex items-center justify-center"
+                  >
+                    <QrCode size={14} className="mr-1" /> 招待QR
+                  </button>
                   <button 
                     onClick={() => handleOpenReservations(slot)}
-                    className="flex-1 bg-white border border-slate-200 py-3 rounded-xl text-sm font-black text-slate-700 flex items-center justify-center shadow-sm"
+                    className="bg-white border border-slate-200 py-2.5 rounded-xl text-xs font-black text-slate-700 flex items-center justify-center shadow-sm"
                   >
-                    <UsersIcon size={16} className="mr-2" /> 名簿
+                    <UsersIcon size={14} className="mr-1" /> 名簿
                   </button>
                   <button 
                     onClick={() => handleOpenSlide(slot.id)}
-                    className="flex-1 bg-white border border-slate-200 py-3 rounded-xl text-sm font-black text-amber-600 flex items-center justify-center shadow-sm"
+                    className="bg-white border border-slate-200 py-2.5 rounded-xl text-xs font-black text-amber-600 flex items-center justify-center shadow-sm"
                   >
-                    <ArrowUpDown size={16} className="mr-2" /> ｽﾗｲﾄﾞ
-                  </button>
-                  <button 
-                    onClick={() => handleDeleteSlot(slot.id)}
-                    className="w-12 bg-red-50 text-red-600 rounded-xl flex items-center justify-center border border-red-100"
-                  >
-                    <Trash2 size={18} />
+                    <ArrowUpDown size={14} className="mr-1" /> ｽﾗｲﾄﾞ
                   </button>
                 </div>
               </div>
@@ -445,6 +581,236 @@ export default function SlotsPage() {
           })}
         </div>
       </div>
+
+      {/* Reservation Invite Modal */}
+      {isInviteModalOpen && inviteSlot && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
+            <div className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm" onClick={() => setIsInviteModalOpen(false)}></div>
+            <div className="bg-white w-full max-w-md rounded-2xl shadow-2xl relative z-10 p-6">
+                <h3 className="text-xl font-bold text-slate-800 mb-2">招待予約URL & QR発行</h3>
+                <p className="text-xs text-slate-400 font-bold mb-4">
+                    【{format(new Date(inviteSlot.start_time), 'HH:mm')}の回】招待者限定の優先予約リンクを発行します。
+                </p>
+
+                {!generatedInvite ? (
+                    <div className="space-y-4">
+                        <div>
+                            <label className="block text-xs font-bold text-slate-700 mb-1">有効期限（仮確保保持時間）</label>
+                            <select
+                                value={inviteDuration}
+                                onChange={(e) => setInviteDuration(e.target.value)}
+                                className="w-full border-slate-200 rounded-xl text-sm"
+                            >
+                                <option value="15">15分間</option>
+                                <option value="30">30分間</option>
+                                <option value="60">1時間</option>
+                                <option value="180">3時間</option>
+                                <option value="1440">24時間</option>
+                            </select>
+                        </div>
+                        <button
+                            onClick={handleGenerateInvite}
+                            className="w-full bg-pink-500 text-white font-bold py-3 rounded-xl hover:bg-pink-600 shadow-md transition-all"
+                        >
+                            招待リンク・QRを発行する
+                        </button>
+                    </div>
+                ) : (
+                    <div className="text-center space-y-4">
+                        <div className="bg-slate-50 p-4 rounded-2xl inline-block border border-slate-100">
+                            <QRCodeSVG value={generatedInvite.url} size={180} />
+                        </div>
+                        <div className="text-left bg-pink-50/50 border border-pink-100 p-3 rounded-xl text-xs space-y-1">
+                            <p className="font-bold text-pink-600">有効期限: {format(new Date(generatedInvite.expiresAt), 'M/d HH:mm')}</p>
+                            <p className="text-slate-500 break-all font-mono select-all bg-white p-2 rounded border border-slate-200">{generatedInvite.url}</p>
+                        </div>
+                        <button
+                            onClick={() => navigator.clipboard.writeText(generatedInvite.url).then(() => toast.success('URLをコピーしました'))}
+                            className="w-full bg-slate-800 text-white font-bold py-2.5 rounded-xl text-xs hover:bg-slate-700"
+                        >
+                            URLをコピー
+                        </button>
+                    </div>
+                )}
+
+                <div className="mt-6 text-right">
+                    <button
+                        onClick={() => setIsInviteModalOpen(false)}
+                        className="px-4 py-2 border border-slate-200 rounded-xl text-xs font-bold text-slate-600"
+                    >
+                        閉じる
+                    </button>
+                </div>
+            </div>
+        </div>
+      )}
+
+      {/* Active Invitations History Modal */}
+      {isHistoryModalOpen && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
+            <div className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm" onClick={() => setIsHistoryModalOpen(false)}></div>
+            <div className="bg-white w-full max-w-2xl rounded-2xl shadow-2xl relative z-10 overflow-hidden flex flex-col max-h-[90vh]">
+                <div className="p-6 border-b border-slate-100 flex justify-between items-center">
+                    <div>
+                        <h3 className="text-xl font-bold text-slate-800 flex items-center gap-2">
+                            <History size={20} className="text-pink-600" /> 発行済み招待URL履歴 (有効)
+                        </h3>
+                        <p className="text-xs text-slate-400 font-medium">現在有効（仮確保中）の招待リンク一覧です。</p>
+                    </div>
+                    <button onClick={() => setIsHistoryModalOpen(false)} className="text-slate-400 hover:text-slate-600">
+                        <X size={24} />
+                    </button>
+                </div>
+
+                <div className="flex-1 overflow-y-auto p-6">
+                    {historyLoading ? (
+                        <div className="py-20 text-center text-slate-400 font-bold animate-pulse">読み込み中...</div>
+                    ) : activeInvitations.length === 0 ? (
+                        <div className="py-20 text-center text-slate-300 font-bold italic">現在有効な招待URLはありません</div>
+                    ) : (
+                        <div className="space-y-4">
+                            {activeInvitations.map(inv => {
+                                const slot = Array.isArray(inv.slots) ? inv.slots[0] : inv.slots;
+                                const slotTimeStr = slot?.start_time ? format(new Date(slot.start_time), 'M/d HH:mm') : '対象枠不明';
+                                return (
+                                    <div key={inv.id} className="bg-slate-50 p-4 rounded-xl border border-slate-100 space-y-2">
+                                        <div className="flex justify-between items-start">
+                                            <div>
+                                                <span className="bg-pink-100 text-pink-700 font-bold text-xs px-2.5 py-1 rounded-full">
+                                                    対象枠: {slotTimeStr}の回
+                                                </span>
+                                                <span className="text-[10px] text-slate-400 font-bold ml-2">
+                                                    発行: {format(new Date(inv.created_at), 'HH:mm')} / 期限: {format(new Date(inv.expires_at), 'M/d HH:mm')}
+                                                </span>
+                                            </div>
+                                            <button
+                                                onClick={() => handleDeleteInvitation(inv.id)}
+                                                className="text-red-500 hover:text-red-700 font-bold text-xs flex items-center gap-1"
+                                            >
+                                                <Trash2 size={14} /> 取消
+                                            </button>
+                                        </div>
+                                        <div className="flex items-center gap-2 bg-white p-2 rounded-lg border border-slate-200">
+                                            <p className="text-xs font-mono text-slate-600 truncate flex-1">{inv.inviteUrl}</p>
+                                            <button
+                                                onClick={() => navigator.clipboard.writeText(inv.inviteUrl).then(() => toast.success('URLをコピーしました'))}
+                                                className="bg-slate-800 text-white text-[10px] font-bold px-3 py-1.5 rounded-md hover:bg-slate-700 flex items-center gap-1 shrink-0"
+                                            >
+                                                <Copy size={12} /> コピー
+                                            </button>
+                                        </div>
+                                    </div>
+                                );
+                            })}
+                        </div>
+                    )}
+                </div>
+
+                <div className="p-4 bg-slate-50 border-t border-slate-100 flex justify-end">
+                    <button
+                        onClick={() => setIsHistoryModalOpen(false)}
+                        className="bg-white border border-slate-200 px-6 py-2 rounded-xl text-xs font-bold text-slate-600 hover:bg-white/80"
+                    >
+                        閉じる
+                    </button>
+                </div>
+            </div>
+        </div>
+      )}
+
+      {/* Pattern JSON Import Modal */}
+      {isJsonModalOpen && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
+            <div className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm" onClick={() => setIsJsonModalOpen(false)}></div>
+            <div className="bg-white w-full max-w-lg rounded-2xl shadow-2xl relative z-10 p-6">
+                <h3 className="text-xl font-bold text-slate-800 mb-2">予約枠公開パターン (JSON) 一括登録</h3>
+                <p className="text-xs text-slate-400 font-bold mb-4">
+                    配列形式で start_time, end_time, capacity, publish_at (任意) を設定したJSONを入力してください。
+                </p>
+
+                <textarea
+                    value={jsonInput}
+                    onChange={(e) => setJsonInput(e.target.value)}
+                    placeholder={'[\n  {\n    "start_time": "2026-05-10T14:00:00+09:00",\n    "end_time": "2026-05-10T15:00:00+09:00",\n    "capacity": 10,\n    "publish_at": "2026-05-01T12:00:00+09:00"\n  }\n]'}
+                    className="w-full h-48 border-slate-200 rounded-xl font-mono text-xs p-3 focus:ring-indigo-500 focus:border-indigo-500"
+                />
+
+                <div className="mt-6 flex space-x-3">
+                    <button
+                        onClick={() => setIsJsonModalOpen(false)}
+                        className="flex-1 px-4 py-2 border border-slate-200 rounded-xl font-bold text-slate-600 hover:bg-slate-50 text-xs"
+                    >
+                        キャンセル
+                    </button>
+                    <button
+                        onClick={handleImportJson}
+                        className="flex-1 px-4 py-2 bg-slate-800 text-white rounded-xl font-bold hover:bg-slate-700 text-xs"
+                    >
+                        一括登録実行
+                    </button>
+                </div>
+            </div>
+        </div>
+      )}
+
+      {/* All Reset Modal */}
+      {isResetModalOpen && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
+            <div className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm" onClick={() => setIsResetModalOpen(false)}></div>
+            <div className="bg-white w-full max-w-md rounded-2xl shadow-2xl relative z-10 p-6">
+                <div className="flex items-center text-red-600 font-black text-xl mb-3">
+                    <AlertTriangle className="mr-2" size={24} /> 警告: オールリセット
+                </div>
+
+                {resetStep === 1 && (
+                    <div className="space-y-4">
+                        <p className="text-sm font-bold text-slate-700 leading-relaxed">
+                            登録されているすべての予約枠、予約データ、お知らせ、招待リンクが完全に全消去されます。この操作は取り消せません。本当によろしいですか？
+                        </p>
+                        <button
+                            onClick={() => setResetStep(2)}
+                            className="w-full bg-red-600 text-white font-black py-3 rounded-xl hover:bg-red-700 text-sm"
+                        >
+                            理解しました (次へ進む 1/2)
+                        </button>
+                    </div>
+                )}
+
+                {resetStep === 2 && (
+                    <div className="space-y-4">
+                        <p className="text-xs font-bold text-red-600">
+                            【最終確認】全データを消去するため、管理者用パスワードを入力してください。
+                        </p>
+                        <div className="relative">
+                            <Key className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
+                            <input
+                                type="password"
+                                placeholder="ADMIN_PASSWORD"
+                                value={resetPassword}
+                                onChange={(e) => setResetPassword(e.target.value)}
+                                className="w-full pl-9 pr-3 py-2 border border-slate-200 rounded-xl text-sm"
+                            />
+                        </div>
+                        <button
+                            onClick={handleExecuteReset}
+                            className="w-full bg-red-600 text-white font-black py-3 rounded-xl hover:bg-red-700 text-sm"
+                        >
+                            すべてのデータを全消去・初期化する
+                        </button>
+                    </div>
+                )}
+
+                <div className="mt-4 text-center">
+                    <button
+                        onClick={() => setIsResetModalOpen(false)}
+                        className="text-xs font-bold text-slate-400 hover:text-slate-600"
+                    >
+                        キャンセルして戻る
+                    </button>
+                </div>
+            </div>
+        </div>
+      )}
 
       {/* Reservation List Modal */}
       {selectedSlot && (
