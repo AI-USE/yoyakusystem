@@ -7,6 +7,36 @@ let currentReservation = null;
 // Initialize Lucide Icons
 lucide.createIcons();
 
+function getInviteToken() {
+    // 1. Direct query parameter: ?invite=TOKEN
+    const searchParams = new URLSearchParams(window.location.search);
+    let token = searchParams.get('invite');
+    if (token) return token;
+
+    // 2. LIFF URL state query parameter: ?liff.state=%3Finvite%3DTOKEN or liff.state=?invite=TOKEN
+    const liffState = searchParams.get('liff.state');
+    if (liffState) {
+        try {
+            const decodedState = decodeURIComponent(liffState);
+            const stateParams = new URLSearchParams(decodedState.startsWith('?') ? decodedState : '?' + decodedState);
+            token = stateParams.get('invite');
+            if (token) return token;
+        } catch (e) {
+            console.error('Failed to parse liff.state:', e);
+        }
+    }
+
+    // 3. Hash parameter fallback: #invite=TOKEN or #?invite=TOKEN
+    if (window.location.hash) {
+        const hashStr = window.location.hash.replace(/^#\??/, '');
+        const hashParams = new URLSearchParams(hashStr);
+        token = hashParams.get('invite');
+        if (token) return token;
+    }
+
+    return null;
+}
+
 async function init() {
     try {
         await liff.init({ liffId: CONFIG.LIFF_ID });
@@ -19,9 +49,8 @@ async function init() {
         
         await fetchData();
 
-        // Check for invitation token parameter (?invite=TOKEN)
-        const urlParams = new URLSearchParams(window.location.search);
-        const inviteToken = urlParams.get('invite');
+        // Check for invitation token parameter across direct query, LIFF state, and hash
+        const inviteToken = getInviteToken();
         if (inviteToken) {
             await handleInviteToken(inviteToken);
         }
@@ -149,6 +178,11 @@ async function handleInviteToken(token) {
     }
 
     const slot = Array.isArray(inv.slots) ? inv.slots[0] : inv.slots;
+    if (!slot) {
+        alert('対象の予約枠が見つかりません。');
+        return;
+    }
+
     const start = dayjs(slot.start_time).tz("Asia/Tokyo").format('HH:mm');
     const end = dayjs(slot.end_time).tz("Asia/Tokyo").format('HH:mm');
 
