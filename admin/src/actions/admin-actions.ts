@@ -19,10 +19,11 @@ export async function createSlot(formData: { start_time: string, end_time: strin
     
     const roomId = await createExperienceRoom(`${startTimeStr}の回`);
 
-    // 2. Insert slot with room_id and optional publish_at
+    // 2. Insert slot with room_id and publish_at (default to current time if unassigned so today's slots show immediately)
+    const nowIso = new Date().toISOString();
     const { error } = await supabaseAdmin.from('slots').insert({
         ...formData,
-        publish_at: formData.publish_at || formData.start_time,
+        publish_at: formData.publish_at || nowIso,
         room_id: roomId // Store the UUID from the experience API
     });
 
@@ -95,7 +96,6 @@ export async function checkInReservation(idOrToken: string, expectedSlotId?: str
         return { success: false, message: `枠が異なります（予約: ${slotTime}の回）` };
     }
 
-    // 体験URLの発行処理 (失敗した場合でもエラーを表示しつつ入場自体は完了させる)
     let experienceUrl: string | null = null;
     let urlWarning = '';
     const urlResult = await issueExperienceUrl(current.user_name || 'ゲスト', slot.room_id, current.slot_id);
@@ -313,11 +313,12 @@ export async function importSlotsPattern(patternJson: string): Promise<ActionRes
             }
         }
 
+        const nowIso = new Date().toISOString();
         const inserts = slotsArray.map(item => ({
             start_time: item.start_time,
             end_time: item.end_time,
             capacity: item.capacity,
-            publish_at: item.publish_at || item.start_time
+            publish_at: item.publish_at || nowIso
         }));
 
         const { error } = await supabaseAdmin.from('slots').insert(inserts);
@@ -337,7 +338,6 @@ export async function resetAllSlots(password: string): Promise<ActionResponse> {
             return { success: false, message: 'パスワードが正しくありません' };
         }
 
-        // Delete all reservations, notifications, invitations, slots
         await supabaseAdmin.from('reservations').delete().neq('id', '00000000-0000-0000-0000-000000000000');
         await supabaseAdmin.from('notifications').delete().neq('id', '00000000-0000-0000-0000-000000000000');
         await supabaseAdmin.from('invitations').delete().neq('id', '00000000-0000-0000-0000-000000000000');

@@ -55,7 +55,7 @@ async function fetchData() {
         return;
     }
 
-    // 1. Fetch Slots (Fetch today's active slots and filter in JS to avoid PostgREST .or() date syntax issues)
+    // 1. Fetch Slots (Fetch today's active slots and filter in JS)
     const now = dayjs();
     const endOfDay = now.endOf('day').toISOString();
     
@@ -71,12 +71,24 @@ async function fetchData() {
         console.error('Failed to fetch slots:', slotsErr);
     }
 
-    // Filter published and non-expired slots in JS using standard core Day.js methods
+    // Filter slots: Display slot if publish_at is null, OR publish_at <= now, OR if slot belongs to today and publish_at equals start_time
     const publishedSlots = (rawSlots || []).filter(s => {
-        const isNotCancelled = !s.is_cancelled;
-        const isPublished = !s.publish_at || !dayjs(s.publish_at).isAfter(now);
+        if (s.is_cancelled) return false;
+
         const isNotEnded = dayjs(s.end_time).isAfter(now);
-        return isNotCancelled && isPublished && isNotEnded;
+        if (!isNotEnded) return false;
+
+        // Display if no publish_at specified
+        if (!s.publish_at) return true;
+
+        // Display if publish_at timestamp has been reached
+        const isPublishedByTime = !dayjs(s.publish_at).isAfter(now);
+
+        // Display if publish_at was set equal to start_time for a slot today
+        const isSameDaySlot = dayjs(s.start_time).isSame(now, 'day');
+        const isPublishAtStart = dayjs(s.publish_at).isSame(dayjs(s.start_time));
+
+        return isPublishedByTime || (isSameDaySlot && isPublishAtStart);
     });
 
     window.allSlots = publishedSlots;
