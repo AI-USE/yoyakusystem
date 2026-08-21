@@ -11,20 +11,24 @@ export type ActionResponse = {
   data?: any;
 };
 
+// Naming helper for JST date and time (e.g., "5月10日 14:00の回")
+function formatSlotRoomName(startTimeIso: string): string {
+  const jstDate = new Date(new Date(startTimeIso).getTime() + 9 * 60 * 60 * 1000);
+  const month = jstDate.getUTCMonth() + 1;
+  const day = jstDate.getUTCDate();
+  const hours = jstDate.getUTCHours().toString().padStart(2, '0');
+  const minutes = jstDate.getUTCMinutes().toString().padStart(2, '0');
+  return `${month}月${day}日 ${hours}:${minutes}の回`;
+}
+
 export async function createSlot(formData: { start_time: string, end_time: string, capacity: number, publish_at?: string }): Promise<ActionResponse> {
   try {
-    // 1. Create Experience Room first with strict JST formatted time name
-    const jstDate = new Date(new Date(formData.start_time).getTime() + 9 * 60 * 60 * 1000);
-    const startTimeStr = jstDate.getUTCHours().toString().padStart(2, '0') + ':' + jstDate.getUTCMinutes().toString().padStart(2, '0');
-    
-    const roomId = await createExperienceRoom(`${startTimeStr}の回`);
-
-    // 2. Insert slot with room_id and publish_at (default to current time if unassigned so today's slots show immediately)
+    // 1. Insert slot without pre-creating room (Room will be created lazily on first check-in)
     const nowIso = new Date().toISOString();
     const { error } = await supabaseAdmin.from('slots').insert({
         ...formData,
         publish_at: formData.publish_at || nowIso,
-        room_id: roomId // Store the UUID from the experience API
+        room_id: null
     });
 
     if (error) return { success: false, message: `枠の作成に失敗しました: ${error.message}` };
@@ -46,14 +50,13 @@ export async function deleteSlot(id: string): Promise<ActionResponse> {
 async function issueExperienceUrl(userName: string, roomId: string | null, slotId: string): Promise<{ success: boolean; url: string | null; error?: string }> {
   let activeRoomId = roomId;
 
+  // 万が一/初回チェックイン時に部屋が未作成(room_idがNULL)の場合、オンデマンドで1回のみ部屋を作成しDBに保存・再利用
   if (!activeRoomId) {
     try {
       const { data: slot } = await supabaseAdmin.from('slots').select('start_time').eq('id', slotId).single();
       if (slot) {
-        const jstDate = new Date(new Date(slot.start_time).getTime() + 9 * 60 * 60 * 1000);
-        const startTimeStr = jstDate.getUTCHours().toString().padStart(2, '0') + ':' + jstDate.getUTCMinutes().toString().padStart(2, '0');
-        
-        const newRoomId = await createExperienceRoom(`${startTimeStr}の回`);
+        const roomName = formatSlotRoomName(slot.start_time);
+        const newRoomId = await createExperienceRoom(roomName);
         if (newRoomId) {
           activeRoomId = newRoomId;
           await supabaseAdmin.from('slots').update({ room_id: newRoomId }).eq('id', slotId);
@@ -318,7 +321,8 @@ export async function importSlotsPattern(patternJson: string): Promise<ActionRes
             start_time: item.start_time,
             end_time: item.end_time,
             capacity: item.capacity,
-            publish_at: item.publish_at || nowIso
+            publish_at: item.publish_at || nowIso,
+            room_id: null
         }));
 
         const { error } = await supabaseAdmin.from('slots').insert(inserts);
