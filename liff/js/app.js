@@ -55,22 +55,32 @@ async function fetchData() {
         return;
     }
 
-    // 1. Fetch Slots (Filter for Today, Not started, and using availability view)
-    // Filter out unpublished slots (publish_at > NOW())
-    const now = dayjs().toISOString();
-    const endOfDay = dayjs().endOf('day').toISOString();
+    // 1. Fetch Slots (Fetch today's active slots and filter in JS to avoid PostgREST .or() date syntax issues)
+    const now = dayjs();
+    const endOfDay = now.endOf('day').toISOString();
     
-    const { data: slots } = await supabaseClient
+    const { data: rawSlots, error: slotsErr } = await supabaseClient
         .from('slot_availability')
-        .select('id, start_time, end_time, capacity, reserved_count, publish_at')
+        .select('id, start_time, end_time, capacity, reserved_count, publish_at, is_cancelled')
         .eq('is_cancelled', false)
-        .gt('start_time', now) 
+        .gte('end_time', now.toISOString())
         .lte('start_time', endOfDay)
-        .or(`publish_at.is.null,publish_at.lte.${now}`)
         .order('start_time', { ascending: true });
 
-    window.allSlots = slots || [];
-    renderSlots(slots || []);
+    if (slotsErr) {
+        console.error('Failed to fetch slots:', slotsErr);
+    }
+
+    // Filter published and non-expired slots in JS using standard core Day.js methods
+    const publishedSlots = (rawSlots || []).filter(s => {
+        const isNotCancelled = !s.is_cancelled;
+        const isPublished = !s.publish_at || !dayjs(s.publish_at).isAfter(now);
+        const isNotEnded = dayjs(s.end_time).isAfter(now);
+        return isNotCancelled && isPublished && isNotEnded;
+    });
+
+    window.allSlots = publishedSlots;
+    renderSlots(publishedSlots);
 
     // 2. Fetch Reservation
     const { data: res } = await supabaseClient
@@ -168,19 +178,13 @@ async function handleInviteToken(token) {
 function renderSlots(slots) {
     const container = document.getElementById('slots-container');
     container.innerHTML = '';
-    
-    // Filter slots to only show those that aren't full (started/today already handled by fetch)
-    const availableSlots = slots.filter(slot => {
-        const remaining = slot.capacity - (slot.reserved_count || 0);
-        return remaining > 0;
-    });
 
-    if (availableSlots.length === 0) {
+    if (!slots || slots.length === 0) {
         container.innerHTML = `<div class="glass-card p-12 text-center text-gray-400 font-bold">予約可能な空き枠はありません</div>`;
         return;
     }
 
-    availableSlots.forEach(slot => {
+    slots.forEach(slot => {
         const remaining = slot.capacity - (slot.reserved_count || 0);
         const isFull = remaining <= 0;
         const start = dayjs(slot.start_time).tz("Asia/Tokyo").format('HH:mm');
