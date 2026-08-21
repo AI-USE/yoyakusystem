@@ -302,6 +302,18 @@ export async function createInvitation(slotId: string, durationMinutes: number =
     }
 }
 
+// 招待URLの取り消し・削除
+export async function deleteInvitation(id: string): Promise<ActionResponse> {
+    try {
+        const { error } = await supabaseAdmin.from('invitations').delete().eq('id', id);
+        if (error) return { success: false, message: `招待リンクの削除に失敗しました: ${error.message}` };
+        revalidatePath('/slots');
+        return { success: true, message: '招待リンクを取り消しました' };
+    } catch (err: any) {
+        return { success: false, message: `エラー: ${err.message}` };
+    }
+}
+
 // 予約枠パターン (JSON) 一括登録
 export async function importSlotsPattern(patternJson: string): Promise<ActionResponse> {
     try {

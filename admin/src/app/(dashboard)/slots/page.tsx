@@ -3,9 +3,9 @@
 import { useState, useEffect, useCallback } from 'react';
 import { format } from 'date-fns';
 import { ja } from 'date-fns/locale';
-import { Plus, Trash2, Search, ArrowUpDown, RefreshCw, Users as UsersIcon, X, UserX, QrCode, FileText, AlertTriangle, Key } from 'lucide-react';
-import { createSlot, deleteSlot, updateReservationStatus, slideSlots, reassignReservation, toggleSlotCancel, addToBlacklist, createInvitation, importSlotsPattern, resetAllSlots } from '@/actions/admin-actions';
-import { getSlotsData, getReservationsBySlot } from '@/actions/fetch-actions';
+import { Plus, Trash2, Search, ArrowUpDown, RefreshCw, Users as UsersIcon, X, UserX, QrCode, FileText, AlertTriangle, Key, History, Copy } from 'lucide-react';
+import { createSlot, deleteSlot, updateReservationStatus, slideSlots, reassignReservation, toggleSlotCancel, addToBlacklist, createInvitation, deleteInvitation, importSlotsPattern, resetAllSlots } from '@/actions/admin-actions';
+import { getSlotsData, getReservationsBySlot, getActiveInvitations } from '@/actions/fetch-actions';
 import toast from 'react-hot-toast';
 import { QRCodeSVG } from 'qrcode.react';
 
@@ -41,6 +41,11 @@ export default function SlotsPage() {
   const [inviteSlot, setInviteSlot] = useState<any>(null);
   const [inviteDuration, setInviteDuration] = useState('30');
   const [generatedInvite, setGeneratedInvite] = useState<{ url: string; expiresAt: string } | null>(null);
+
+  // Active Invitations History Modal
+  const [isHistoryModalOpen, setIsHistoryModalOpen] = useState(false);
+  const [activeInvitations, setActiveInvitations] = useState<any[]>([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
 
   // JSON Import Modal
   const [isJsonModalOpen, setIsJsonModalOpen] = useState(false);
@@ -79,6 +84,30 @@ export default function SlotsPage() {
   useEffect(() => {
     fetchSlots();
   }, [fetchSlots]);
+
+  const fetchInvitationsHistory = async () => {
+    setHistoryLoading(true);
+    const data = await getActiveInvitations();
+    setActiveInvitations(data);
+    setHistoryLoading(false);
+  };
+
+  const handleOpenHistoryModal = async () => {
+    setIsHistoryModalOpen(true);
+    await fetchInvitationsHistory();
+  };
+
+  const handleDeleteInvitation = async (id: string) => {
+    if (!confirm('この招待リンクを取り消してもよろしいですか？')) return;
+    const res = await deleteInvitation(id);
+    if (res.success) {
+        toast.success(res.message!);
+        await fetchInvitationsHistory();
+        fetchSlots();
+    } else {
+        toast.error(res.message!);
+    }
+  };
 
   const handleCreateSlot = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -275,6 +304,12 @@ export default function SlotsPage() {
       <div className="flex justify-between items-center mb-6">
         <h1 className="text-2xl font-bold">時間枠管理</h1>
         <div className="flex gap-2">
+            <button
+                onClick={handleOpenHistoryModal}
+                className="bg-pink-600 text-white px-3 py-2 rounded-lg text-xs font-bold flex items-center hover:bg-pink-700"
+            >
+                <History size={16} className="mr-1.5" /> 発行履歴（有効な招待）
+            </button>
             <button
                 onClick={() => setIsJsonModalOpen(true)}
                 className="bg-slate-800 text-white px-3 py-2 rounded-lg text-xs font-bold flex items-center hover:bg-slate-700"
@@ -602,6 +637,79 @@ export default function SlotsPage() {
                     <button
                         onClick={() => setIsInviteModalOpen(false)}
                         className="px-4 py-2 border border-slate-200 rounded-xl text-xs font-bold text-slate-600"
+                    >
+                        閉じる
+                    </button>
+                </div>
+            </div>
+        </div>
+      )}
+
+      {/* Active Invitations History Modal */}
+      {isHistoryModalOpen && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
+            <div className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm" onClick={() => setIsHistoryModalOpen(false)}></div>
+            <div className="bg-white w-full max-w-2xl rounded-2xl shadow-2xl relative z-10 overflow-hidden flex flex-col max-h-[90vh]">
+                <div className="p-6 border-b border-slate-100 flex justify-between items-center">
+                    <div>
+                        <h3 className="text-xl font-bold text-slate-800 flex items-center gap-2">
+                            <History size={20} className="text-pink-600" /> 発行済み招待URL履歴 (有効)
+                        </h3>
+                        <p className="text-xs text-slate-400 font-medium">現在有効（仮確保中）の招待リンク一覧です。</p>
+                    </div>
+                    <button onClick={() => setIsHistoryModalOpen(false)} className="text-slate-400 hover:text-slate-600">
+                        <X size={24} />
+                    </button>
+                </div>
+
+                <div className="flex-1 overflow-y-auto p-6">
+                    {historyLoading ? (
+                        <div className="py-20 text-center text-slate-400 font-bold animate-pulse">読み込み中...</div>
+                    ) : activeInvitations.length === 0 ? (
+                        <div className="py-20 text-center text-slate-300 font-bold italic">現在有効な招待URLはありません</div>
+                    ) : (
+                        <div className="space-y-4">
+                            {activeInvitations.map(inv => {
+                                const slot = Array.isArray(inv.slots) ? inv.slots[0] : inv.slots;
+                                const slotTimeStr = slot?.start_time ? format(new Date(slot.start_time), 'M/d HH:mm') : '対象枠不明';
+                                return (
+                                    <div key={inv.id} className="bg-slate-50 p-4 rounded-xl border border-slate-100 space-y-2">
+                                        <div className="flex justify-between items-start">
+                                            <div>
+                                                <span className="bg-pink-100 text-pink-700 font-bold text-xs px-2.5 py-1 rounded-full">
+                                                    対象枠: {slotTimeStr}の回
+                                                </span>
+                                                <span className="text-[10px] text-slate-400 font-bold ml-2">
+                                                    発行: {format(new Date(inv.created_at), 'HH:mm')} / 期限: {format(new Date(inv.expires_at), 'M/d HH:mm')}
+                                                </span>
+                                            </div>
+                                            <button
+                                                onClick={() => handleDeleteInvitation(inv.id)}
+                                                className="text-red-500 hover:text-red-700 font-bold text-xs flex items-center gap-1"
+                                            >
+                                                <Trash2 size={14} /> 取消
+                                            </button>
+                                        </div>
+                                        <div className="flex items-center gap-2 bg-white p-2 rounded-lg border border-slate-200">
+                                            <p className="text-xs font-mono text-slate-600 truncate flex-1">{inv.inviteUrl}</p>
+                                            <button
+                                                onClick={() => navigator.clipboard.writeText(inv.inviteUrl).then(() => toast.success('URLをコピーしました'))}
+                                                className="bg-slate-800 text-white text-[10px] font-bold px-3 py-1.5 rounded-md hover:bg-slate-700 flex items-center gap-1 shrink-0"
+                                            >
+                                                <Copy size={12} /> コピー
+                                            </button>
+                                        </div>
+                                    </div>
+                                );
+                            })}
+                        </div>
+                    )}
+                </div>
+
+                <div className="p-4 bg-slate-50 border-t border-slate-100 flex justify-end">
+                    <button
+                        onClick={() => setIsHistoryModalOpen(false)}
+                        className="bg-white border border-slate-200 px-6 py-2 rounded-xl text-xs font-bold text-slate-600 hover:bg-white/80"
                     >
                         閉じる
                     </button>

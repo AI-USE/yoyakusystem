@@ -61,6 +61,31 @@ export async function getReservationsBySlot(slotId: string) {
 }
 
 /**
+ * Fetch active, unexpired pending invitations
+ */
+export async function getActiveInvitations() {
+    const now = new Date().toISOString();
+    const baseUrl = process.env.NEXT_PUBLIC_BASE_URL || 'https://liff.line.me/YOUR_LIFF_ID';
+
+    const { data, error } = await supabaseAdmin
+        .from('invitations')
+        .select('id, token, expires_at, created_at, slot_id, slots(start_time, end_time)')
+        .eq('status', 'pending')
+        .gt('expires_at', now)
+        .order('created_at', { ascending: false });
+
+    if (error) {
+        console.error('getActiveInvitations error:', error);
+        return [];
+    }
+
+    return (data || []).map(inv => ({
+        ...inv,
+        inviteUrl: `${baseUrl}?invite=${inv.token}`
+    }));
+}
+
+/**
  * Fetch blacklist
  */
 export async function getBlacklist() {
